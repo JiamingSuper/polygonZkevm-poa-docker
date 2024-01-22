@@ -1,0 +1,333 @@
+version: "3.5"
+
+networks:
+  l1:
+    external: true
+  l2:
+    external: true
+
+configs:
+  zkevm_state_db_init_sql:
+    file: ./l2/db/scripts/init_prover_db.sql 
+  zkevm_event_db_init_sql:
+    file: ./l2/db/scripts/init_event_db.sql 
+  test_node_config:
+    file: ./l2/config_n1/test.node.config.toml
+  test_genesis_config:
+    file: ./l2/config_n1/test.genesis.config.json
+  test_prover_config:
+    file: ./l2/config_n1/test.prover.config.json
+  sequencer_keystore:
+    file: ./l2/sequencer.keystore
+  aggregator_keystore:
+    file: ./l2/aggregator.keystore
+
+services:
+  zkevm-state-db:
+    image: postgres:15
+    networks:
+      - l2
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    configs:
+      - source: zkevm_state_db_init_sql
+        target: /docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=state_user
+      - POSTGRES_PASSWORD=state_password
+      - POSTGRES_DB=state_db
+    command:
+      - "postgres"
+      - "-N"
+      - "500"
+
+  zkevm-pool-db:
+    image: postgres:15
+    networks:
+      - l2
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      placement:
+        constraints:
+        - node.hostname==worker-002
+
+    environment:
+      - POSTGRES_USER=pool_user
+      - POSTGRES_PASSWORD=pool_password
+      - POSTGRES_DB=pool_db
+    command:
+      - "postgres"
+      - "-N"
+      - "500"
+
+  zkevm-event-db:
+    image: postgres:15
+    networks:
+      - l2
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    configs:
+      - source: zkevm_event_db_init_sql
+        target: /docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=event_user
+      - POSTGRES_PASSWORD=event_password
+      - POSTGRES_DB=event_db
+    command:
+      - "postgres"
+      - "-N"
+      - "500"
+
+  zkevm-sequencer:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    networks:
+      - l1
+      - l2
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+      - ZKEVM_NODE_POOL_DB_HOST=l2n1_zkevm-pool-db
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components sequencer"
+
+  zkevm-sequence-sender:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    networks:
+      - l2
+      - l1
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+      - ZKEVM_NODE_POOL_DB_HOST=l2n1_zkevm-pool-db
+      - ZKEVM_NODE_SEQUENCER_SENDER_ADDRESS=0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+      - source: sequencer_keystore
+        target: /pk/sequencer.keystore
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components sequence-sender"
+
+  zkevm-json-rpc:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    networks:
+      - l2
+      - l1
+    ports:
+      - 8123:8123
+      - 8133:8133 # needed if WebSockets enabled
+      # - 9091:9091 # needed if metrics enabled
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+      - ZKEVM_NODE_POOL_DB_HOST=l2n1_zkevm-pool-db
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+    # volumes:
+    #   - ./config/test.node.config.toml:/app/config.toml
+    #   - ./config/test.genesis.config.json:/app/genesis.json
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components rpc"
+
+  zkevm-aggregator:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    networks:
+      - l2
+      - l1
+    # ports:
+    #   - 50081:50081
+    #   - 9093:9091 # needed if metrics enabled
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+      - ZKEVM_NODE_AGGREGATOR_SENDER_ADDRESS=0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+    # volumes:
+    #   - ./config/test.node.config.toml:/app/config.toml
+    #   - ./config/test.genesis.config.json:/app/genesis.json
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components aggregator"
+
+  zkevm-sync:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    # ports:
+    #   - 9095:9091 # needed if metrics enabled
+    networks:
+      - l2
+      - l1
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+    # volumes:
+    #   - ./config/test.node.config.toml:/app/config.toml
+    #   - ./config/test.genesis.config.json:/app/genesis.json
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components synchronizer"
+
+  zkevm-eth-tx-manager:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    # ports:
+    #   - 9094:9091 # needed if metrics enabled
+    networks:
+      - l2
+      - l1
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+      - source: sequencer_keystore
+        target: /pk/sequencer.keystore
+      - source: aggregator_keystore
+        target: /pk/aggregator.keystore
+    # volumes:
+    #   - ./sequencer.keystore:/pk/sequencer.keystore
+    #   - ./aggregator.keystore:/pk/aggregator.keystore
+    #   - ./config/test.node.config.toml:/app/config.toml
+    #   - ./config/test.genesis.config.json:/app/genesis.json
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components eth-tx-manager"
+
+  zkevm-l2gaspricer:
+    image: tasse00/polygonzkevm-node:20231215
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    networks:
+      - l2
+      - l1
+    environment:
+      - ZKEVM_NODE_POOL_DB_HOST=l2n1_zkevm-pool-db
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+    # volumes:
+    #   - ./test.keystore:/pk/keystore
+    #   - ./config/test.node.config.toml:/app/config.toml
+    #   - ./config/test.genesis.config.json:/app/genesis.json
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node run --network custom --custom-network-file /app/genesis.json --cfg /app/config.toml --components l2gaspricer"
+
+  zkevm-prover:
+    image: hermeznetwork/zkevm-prover:v3.0.2
+    deploy:
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    networks:
+      - l2
+    # ports:
+    #   - 50061:50061 # MT
+    #   - 50071:50071 # Executor
+    configs:
+      - source: test_prover_config
+        target: /usr/src/app/config.json
+    # volumes:
+    #   - ./config/test.prover.config.json:/usr/src/app/config.json
+    command: >
+      zkProver -c /usr/src/app/config.json
+
+  zkevm-approve:
+    image: tasse00/polygonzkevm-node:20231215
+    networks:
+      - l1
+      - l2
+    deploy:
+      restart_policy:
+        condition: none
+      placement:
+        constraints:
+        - node.hostname==worker-002
+    environment:
+      - ZKEVM_NODE_STATE_DB_HOST=l2n1_zkevm-state-db
+    configs:
+      - source: test_node_config
+        target: /app/config.toml
+      - source: test_genesis_config
+        target: /app/genesis.json
+      - source: sequencer_keystore
+        target: /pk/keystore
+    # volumes:
+    #   - ./sequencer.keystore:/pk/keystore
+    #   - ./config/test.node.config.toml:/app/config.toml
+    #   - ./config/test.genesis.config.json:/app/genesis.json
+
+    command:
+      - "/bin/sh"
+      - "-c"
+      - "/app/zkevm-node approve --network custom --custom-network-file /app/genesis.json --key-store-path /pk/keystore --pw testonly --am 115792089237316195423570985008687907853269984665640564039457584007913129639935 -y --cfg /app/config.toml"
