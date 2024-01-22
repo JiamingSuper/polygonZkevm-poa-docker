@@ -20,39 +20,41 @@ node_count=$(docker node ls --format "{{.ID}}" | wc -l)
 
 # 判断是否足够开启需要的节点数量
 if ! [[ $1 =~ ^[0-9]+$ ]] || ((node_count < $1)); then
-    echo "Error: There aren't enough machines or invalid input."
-    echo "Please use the Docker swarm command to join enough machines."
-    exit 1
+  echo "Error: There aren't enough machines or invalid input."
+  echo "Please use the Docker swarm command to join enough machines."
+  exit 1
 fi
 
 # 准备配置文件
 if [ $1 -ge 5 ]; then
-    for ((i=5; i<=$1; i++)); do
-        source_folder="l2/config_n4"
-        destination_folder="l2/config_n$i"
-        mkdir -p "$destination_folder"
-        cp -r "$source_folder"/* "$destination_folder/"
-        toml_path="$destination_folder/test.node.config.toml"
-        sed -i "s/l2n4/l2n$i/g" "$toml_path"
-        json_path="$destination_folder/test.prover.config.json"
-        sed -i "s/l2n4/l2n$i/g" "$json_path"
-    done
+  for ((i=5; i<=$1; i++)); do
+    source_folder="l2/config_n4"
+    destination_folder="l2/config_n$i"
+    mkdir -p "$destination_folder"
+    cp -r "$source_folder"/* "$destination_folder/"
+    toml_path="$destination_folder/test.node.config.toml"
+    sed -i "s/l2n4/l2n$i/g" "$toml_path"
+    json_path="$destination_folder/test.prover.config.json"
+    sed -i "s/l2n4/l2n$i/g" "$json_path"
+  done
 fi
 
 # 获取节点hostname并开启
 nodes_host=($(docker node ls --format "{{.Hostname}}"))
 count=0
 for node in "${nodes_host[@]}"; do
-    echo $node
+    if [ $count -ge $1]; then
+      break
+    fi
     ((count++))
     if [ $count -eq 1 ]; then
-        source_l1_file="l1_node_base.yml"
-        destination_l1_file="l1/l1n1.yml"
-        cp "$source_l1_file" "$destination_l1_file"
-        sed -i "s/worker-006/$node/g" "$destination_l1_file"
-        docker stack deploy -c "$destination_l1_file" l1
-        echo "l1 RPC:  $node:8545"
-        echo "l1 WS:   $node:8546"
+      source_l1_file="l1_node_base.yml"
+      destination_l1_file="l1/l1n1.yml"
+      cp "$source_l1_file" "$destination_l1_file"
+      sed -i "s/worker-006/$node/g" "$destination_l1_file"
+      docker stack deploy -c "$destination_l1_file" l1
+      echo "l1 RPC:  $node:8545"
+      echo "l1 WS:   $node:8546"
     fi
     source_file="l2_node_base.yml"
     destination_file="l2/l2n$count.yml"
