@@ -61,6 +61,11 @@ for node in "${nodes_host[@]}"; do
     cp "$source_file" "$destination_file"
     sed -i "s/config_n1/config_n$count/g" "$destination_file"
     sed -i "s/worker-002/$node/g" "$destination_file"
+    node_port1=$((count + 8123))
+    node_port2=$((count + 18133))
+    sed -i "s/8123:8123/$node_port1:8123/g" "$destination_file"
+    sed -i "s/8133:8133/$node_port1:8133/g" "$destination_file"
     docker stack deploy -c "$destination_file" "l2n$count"
-    echo "l2n$count RPC:  $node:8123"
+    echo "l2n$count RPC:  $node:$node_port1"
+    echo "l2n$count WS:   $node:$node_port2"
 done
